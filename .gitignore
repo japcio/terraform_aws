@@ -1,0 +1,6 @@
+*.tfstate
+*.tfstate.backup
+.terraform
+*.iml
+"aws user japcioterra.txt"
+.\code
