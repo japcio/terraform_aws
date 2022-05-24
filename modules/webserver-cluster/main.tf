@@ -1,83 +1,20 @@
-provider "aws" {
-    region = "eu-west-1"
-  
-}
-
-resource "aws_s3_bucket" "terraform_state" {
-    bucket="terraform-current-state-japcio-aws"
-    #Prevent accidental deletion of this S3 bucket
-    lifecycle {
-      prevent_destroy = true
-    }
-}
-
-#Enable versioning
-resource "aws_s3_bucket_versioning" "enabled" {
-  bucket = aws_s3_bucket.terraform_state.id
-  versioning_configuration {
-    status ="Enabled"
-  }
-  
-}
-
-#Enable server-side encryption by default
-resource "aws_s3_bucket_server_side_encryption_configuration" "defaut" {
-  bucket = aws_s3_bucket.terraform_state.id
-
-  rule {
-    apply_server_side_encryption_by_default{
-      sse_algorithm = "AES256"
-    }
-  }
-}
-
-
-#Block public access to S3 bucket
-resource "aws_s3_bucket_public_access_block" "example" {
-  bucket = aws_s3_bucket.terraform_state.id
-  block_public_acls = true
-  block_public_policy = true
-  ignore_public_acls  = true
-  restrict_public_buckets = true
-}
-
-#DynamoDB will be used for locking
-resource "aws_dynamodb_table" "terraform_locks" {
-  name  = "terraform-locks"
-  billing_mode  = "PAY_PER_REQUEST"
-  hash_key      = "LockID"
-  
-  attribute {
-    name  = "LockID"
-    type  = "S"
-  }
-}
-
-terraform {
-  backend "s3" {
-    bucket  = "terraform-current-state-japcio-aws"
-    key     = "global/s3/terraform.tfstate"
-    region  = "eu-west-1"
-
-    dynamodb_table  = "terraform-locks"
-    encrypt         = true
-  }
-}
-
-variable "server_port" {
-    description = "The port the server will use for HTTP requests"
-    type        = number
-    default = 8080
-}
 
 output "alb_dns_name" {
     value = aws_lb.example.dns_name
     description = "DNS name of the load balancer"
 }
 
+locals {
+  http_port     = 80
+  any_port      = 0
+  any_protocol  = "-1"
+  tcp_protocol  = "tcp"
+  all_ips       = ["0.0.0.0/0"]
+}
+
 
 resource "aws_security_group" "instance" {
-    name = "terraform-security-group"
+    name = "${var.cluster_name}-instance"
 
     ingress {
         from_port   = var.server_port
@@ -97,7 +34,7 @@ resource "aws_security_group" "instance" {
 
 #Security group for Application Load Balancer
 resource "aws_security_group" "alb" {
-    name = "terraform-example-alb"
+    name = "${var.cluster_name}-alb"
 
     #Allow inbound HTTP requests
     ingress {
@@ -129,7 +66,7 @@ data "aws_subnets" "default" {
 
 resource "aws_launch_configuration" "example" {
     image_id = "ami-00c90dbdc12232b58"
-    instance_type = "t2.micro"
+    instance_type = var.instance_type
     security_groups = [aws_security_group.instance.id]
 
     user_data = templatefile("user_data.sh", {
@@ -153,25 +90,25 @@ resource "aws_autoscaling_group" "example" {
     target_group_arns = [aws_lb_target_group.asg.arn]
     health_check_type ="ELB"
 
-    min_size = 2
-    max_size = 10
+    min_size = var.min_size
+    max_size = var.max_size
 
     tag {
         key     = "Name"
-        value   ="terraform-asg-example"
+        value   = var.cluster_name
         propagate_at_launch = true
     }
 }
 
 resource "aws_lb" "example" {
-    name                = "terraform-asg-example"
+    name                = var.cluster_name
     load_balancer_type  = "application"
     subnets             = data.aws_subnets.default.ids
     security_groups     = [aws_security_group.alb.id]
 }
 
 resource "aws_lb_target_group" "asg" {
-  name  = "terraform-asg-example"
+  name  = var.cluster_name
   port  =   var.server_port
   protocol  = "HTTP"
   vpc_id    = data.aws_vpc.default.id
@@ -235,8 +172,9 @@ data "terraform_remote_state" "db" {
   backend = "s3"
 
   config = {
-    bucket = "terraform-current-state-japcio-aws"
-    key    = "data-stores/mysql/terraform.tfstate"
+    bucket = var.db_remote_state_bucket
+    key    = var.db_remote_state_key
     region = "eu-west-1"
   }
 }
+

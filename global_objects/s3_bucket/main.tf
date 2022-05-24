@@ -4,7 +4,9 @@ provider "aws" {
 }
 
 resource "aws_s3_bucket" "terraform_state" {
-    bucket="terraform-current-state-japcio"
+    #bucket="terraform-current-state-japcio-aws"
+    bucket = var.bucket_name
+
 
     #Prevent accidental deletion of this S3 bucket
     lifecycle {
@@ -42,10 +44,10 @@ resource "aws_s3_bucket_public_access_block" "example" {
   restrict_public_buckets = true
 }
 
-
 #DynamoDB will be used for locking
 resource "aws_dynamodb_table" "terraform_locks" {
-  name  = "terraform-locks"
+  #name  = "terraform-locks"
+  name  = var.table_name
   billing_mode  = "PAY_PER_REQUEST"
   hash_key      = "LockID"
   
@@ -53,26 +55,4 @@ resource "aws_dynamodb_table" "terraform_locks" {
     name  = "LockID"
     type  = "S"
   }
-}
-
-terraform {
-  backend "s3" {
-    bucket  = "terraform-current-state-japcio"
-    key     = "global/s3/terraform.tfstate"
-    region  = "eu-west-1"
-
-    dynamodb_table  = "terraform-locks"
-    encrypt         = true
-  }
-}
-
-
-output "s3_bucker_arn" {
-  value = aws_s3_bucket.terraform_state.arn
-  description = "The ARN of the s3 bucket"
-}
-
-output "dynamodb_table_name" {
-  value = aws_dynamodb_table.terraform_locks.name
-  description ="The name of the DynamoDB table"
 }

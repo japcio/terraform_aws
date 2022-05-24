@@ -1,7 +1,68 @@
-#main file for terraform
-
 provider "aws" {
-    region="eu-west-1"
+    region = "eu-west-1"
+  
+}
+
+resource "aws_s3_bucket" "terraform_state" {
+    bucket="terraform-current-state-japcio-aws"
+
+    #Prevent accidental deletion of this S3 bucket
+    lifecycle {
+      prevent_destroy = true
+    }
+}
+
+#Enable versioning
+resource "aws_s3_bucket_versioning" "enabled" {
+  bucket = aws_s3_bucket.terraform_state.id
+  versioning_configuration {
+    status ="Enabled"
+  }
+  
+}
+
+#Enable server-side encryption by default
+resource "aws_s3_bucket_server_side_encryption_configuration" "defaut" {
+  bucket = aws_s3_bucket.terraform_state.id
+
+  rule {
+    apply_server_side_encryption_by_default{
+      sse_algorithm = "AES256"
+    }
+  }
+}
+
+
+#Block public access to S3 bucket
+resource "aws_s3_bucket_public_access_block" "example" {
+  bucket = aws_s3_bucket.terraform_state.id
+  block_public_acls = true
+  block_public_policy = true
+  ignore_public_acls  = true
+  restrict_public_buckets = true
+}
+
+#DynamoDB will be used for locking
+resource "aws_dynamodb_table" "terraform_locks" {
+  name  = "terraform-locks"
+  billing_mode  = "PAY_PER_REQUEST"
+  hash_key      = "LockID"
+  
+  attribute {
+    name  = "LockID"
+    type  = "S"
+  }
+}
+
+terraform {
+  backend "s3" {
+    bucket  = "terraform-current-state-japcio-aws"
+    key     = "global/s3/terraform.tfstate"
+    region  = "eu-west-1"
+
+    dynamodb_table  = "terraform-locks"
+    encrypt         = true
+  }
 }
 
 variable "server_port" {
@@ -32,6 +93,7 @@ resource "aws_security_group" "instance" {
         protocol    = "tcp"
         cidr_blocks = [ "0.0.0.0/0" ]
     }
+    
 }
 
 #Security group for Application Load Balancer
@@ -51,6 +113,7 @@ resource "aws_security_group" "alb" {
         from_port   = 0
         to_port     = 0
         protocol    = "-1" #all protocols
+        cidr_blocks = ["0.0.0.0/0"] 
     }
 }
 
@@ -70,11 +133,12 @@ resource "aws_launch_configuration" "example" {
     instance_type = "t2.micro"
     security_groups = [aws_security_group.instance.id]
 
-    user_data = <<-EOF
-              #!/bin/bash
-              echo "Hello, World" > index.html
-              nohup busybox httpd -f -p ${var.server_port} &
-              EOF
+    user_data = templatefile("user_data.sh", {
+      server_port = var.server_port
+      db_address  = data.terraform_remote_state.db.outputs.address
+      db_port     = data.terraform_remote_state.db.outputs.port
+    })
+    
 
 # Required when using a launch configuration with an auto scaling group.
     lifecycle {
@@ -132,9 +196,7 @@ resource "aws_lb_listener" "http" {
     #By default show a simple 404 page
     default_action {
         type = "fixed-response"
-    
-
-        fixed_response {
+            fixed_response {
             content_type    = "text/plain"
             message_body    = "404: page not found"
             status_code = 404
@@ -142,19 +204,41 @@ resource "aws_lb_listener" "http" {
     }
 }
 
-
 resource "aws_lb_listener_rule" "asg" {
-    listener_arn = aws_lb_listener.http.arn
-    priority = 100
+  listener_arn = aws_lb_listener.http.arn
+  priority     = 100
 
-    condition {
-      path_pattern {
-          values = ["*"]
-      }
+  condition {
+    path_pattern {
+      values = ["*"]
     }
+  }
 
-    action {
-      type  = "forward"
-      target_group_arn = aws_lb_target_group.asg.arn
-    }
+  action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.asg.arn
+  }
+}
+
+
+
+output "s3_bucker_arn" {
+  value = aws_s3_bucket.terraform_state.arn
+  description = "The ARN of the s3 bucket"
+}
+
+output "dynamodb_table_name" {
+  value = aws_dynamodb_table.terraform_locks.name
+  description ="The name of the DynamoDB table"
+}
+
+
+data "terraform_remote_state" "db" {
+  backend = "s3"
+
+  config = {
+    bucket = "terraform-current-state-japcio-aws"
+    key    = "data-stores/mysql/terraform.tfstate"
+    region = "eu-west-1"
+  }
 }
