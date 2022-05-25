@@ -7,7 +7,6 @@ resource "aws_s3_bucket" "terraform_state" {
     #bucket="terraform-current-state-japcio-aws"
     bucket = var.bucket_name
 
-
     #Prevent accidental deletion of this S3 bucket
     lifecycle {
       prevent_destroy = true

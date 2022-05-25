@@ -1,12 +1,7 @@
-
-output "alb_dns_name" {
-    value = aws_lb.example.dns_name
-    description = "DNS name of the load balancer"
-}
-
 locals {
   http_port     = 80
   any_port      = 0
+  ssh_port      = 22
   any_protocol  = "-1"
   tcp_protocol  = "tcp"
   all_ips       = ["0.0.0.0/0"]
@@ -15,43 +10,50 @@ locals {
 
 resource "aws_security_group" "instance" {
     name = "${var.cluster_name}-instance"
+}
 
-    ingress {
-        from_port   = var.server_port
-        to_port     = var.server_port
-        protocol    = "tcp"
-        cidr_blocks = ["0.0.0.0/0"]
-    }
+resource "aws_security_group_rule" "allow_server_port_inbound" {
+  type              = "ingress"
+  security_group_id = aws_security_group.instance.id
+  from_port         = var.server_port
+  to_port           = var.server_port
+  protocol          = local.tcp_protocol
+  cidr_blocks       = local.all_ips
+}
 
-    ingress {
-        from_port   = 22
-        to_port     = 22
-        protocol    = "tcp"
-        cidr_blocks = [ "0.0.0.0/0" ]
-    }
-    
+resource "aws_security_group_rule" "allow_ssh_port_inbound" {
+  type              = "ingress"
+  security_group_id = aws_security_group.instance.id
+  from_port         = local.ssh_port
+  to_port           = local.ssh_port
+  protocol          = local.tcp_protocol
+  cidr_blocks       = local.all_ips
 }
 
 #Security group for Application Load Balancer
 resource "aws_security_group" "alb" {
     name = "${var.cluster_name}-alb"
-
-    #Allow inbound HTTP requests
-    ingress {
-        from_port       = 80
-        to_port         = 80
-        protocol        = "tcp"
-        cidr_blocks = ["0.0.0.0/0"] 
-    }
-
-    #Allow outbound requests
-    egress {
-        from_port   = 0
-        to_port     = 0
-        protocol    = "-1" #all protocols
-        cidr_blocks = ["0.0.0.0/0"] 
-    }
 }
+
+resource "aws_security_group_rule" "allow_http_inbound" {
+  type              = "ingress"
+  security_group_id = aws_security_group.alb.id
+  from_port         = local.http_port
+  to_port           = local.http_port
+  protocol          = local.tcp_protocol
+  cidr_blocks       = local.all_ips
+}
+
+resource "aws_security_group_rule" "allow_all_outbound" {
+  type              = "egress"
+  security_group_id = aws_security_group.alb.id
+  from_port         = local.any_port
+  to_port           = local.any_port
+  protocol          = local.any_protocol
+  cidr_blocks       = local.all_ips
+}
+
+
 
 data "aws_vpc" "default" {
     default = true
@@ -69,7 +71,7 @@ resource "aws_launch_configuration" "example" {
     instance_type = var.instance_type
     security_groups = [aws_security_group.instance.id]
 
-    user_data = templatefile("user_data.sh", {
+    user_data = templatefile("${path.module}/user_data.sh", {
       server_port = var.server_port
       db_address  = data.terraform_remote_state.db.outputs.address
       db_port     = data.terraform_remote_state.db.outputs.port
@@ -155,19 +157,6 @@ resource "aws_lb_listener_rule" "asg" {
   }
 }
 
-
-
-output "s3_bucker_arn" {
-  value = aws_s3_bucket.terraform_state.arn
-  description = "The ARN of the s3 bucket"
-}
-
-output "dynamodb_table_name" {
-  value = aws_dynamodb_table.terraform_locks.name
-  description ="The name of the DynamoDB table"
-}
-
-
 data "terraform_remote_state" "db" {
   backend = "s3"
 
@@ -177,4 +166,3 @@ data "terraform_remote_state" "db" {
     region = "eu-west-1"
   }
 }
-

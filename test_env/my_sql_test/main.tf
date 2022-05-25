@@ -1,3 +1,14 @@
+terraform {
+  backend "s3" {
+    bucket         = "terraform-current-state-japcio-aws"
+    key            = "../../global_objects/s3_bucket/terraform.tfstate"
+    region         = "eu-west-1"
+
+    dynamodb_table = "terraform-locks"
+    encrypt        = true
+  }
+}
+
 provider "aws"{
     region  =   "eu-west-1"
 }
@@ -13,5 +24,4 @@ resource "aws_db_instance" "example" {
     username = var.db_username
     password = var.db_password
 }
-
 
